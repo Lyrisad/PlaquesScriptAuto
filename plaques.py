@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
 BATCH_SIZE = 20
-WAIT_BETWEEN_BATCHES = 30
+WAIT_BETWEEN_BATCHES = 31
 WAIT_BETWEEN_PLATES = 8
 
 def load_plates_from_file(filename="plaques.txt"):
@@ -41,7 +41,7 @@ async def check_plate(browser, plate):
 
         # 4) Click + short pause
         await page.click("text=Vérifier mes péages à payer")
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(4000)
 
         # 5) Body text
         body_text = await page.text_content("body") or ""
