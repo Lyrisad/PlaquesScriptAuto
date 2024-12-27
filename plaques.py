@@ -21,18 +21,21 @@ async def check_plate(browser, plate):
     page = await browser.new_page()
     status = "Erreur"
     montant = "N/A"
+    date_passage = "N/A"  # Renamed field: "Date de passage"
+
     try:
         # 1) Goto
         await page.goto("https://www.sanef.com/client/index.html#basket",
                         wait_until="networkidle",
                         timeout=20000)
+        
         # 2) Cookies
         try:
             await page.click(".tarteaucitronCTAButton", timeout=8000)
         except:
             pass
 
-        # 3) Fill
+        # 3) Fill the plate
         await page.wait_for_selector("input.input-no-focus", timeout=12000)
         await page.fill("input.input-no-focus", plate)
 
@@ -52,12 +55,14 @@ async def check_plate(browser, plate):
             status = "Péages dus"
             print(f"{plate}: Péages dus")
 
+            # Try to find total amount by selector
             total_elem = await page.query_selector("span.total-amount")
             if total_elem:
                 extracted = (await total_elem.text_content() or "").strip()
                 montant = extracted
                 print(f" - Montant trouvé via span.total-amount: {montant}")
             else:
+                # Fallback Regex for amount
                 pattern = r"\b(\d{1,3},\d{2}\s?€)\b"
                 match = re.search(pattern, body_text)
                 if match:
@@ -66,6 +71,18 @@ async def check_plate(browser, plate):
                 else:
                     montant = "Inconnu"
                     print(" - Impossible de trouver le montant.")
+
+            # 7) Try to parse a “date de passage” from the page
+            #    Example regex for a French format DD/MM/YYYY
+            date_passage_pattern = r"(\d{2}/\d{2}/\d{4})"
+            match_date = re.search(date_passage_pattern, body_text)
+            if match_date:
+                date_passage = match_date.group(1)
+                print(f" - Date de passage trouvée : {date_passage}")
+            else:
+                # If there's no match, we leave it as “N/A”
+                pass
+
     except Exception as e:
         print(f"{plate}: Erreur - {e}")
     finally:
@@ -73,7 +90,9 @@ async def check_plate(browser, plate):
 
     # Wait between each plate
     await asyncio.sleep(WAIT_BETWEEN_PLATES)
-    return (plate, status, montant)
+
+    # Return the new date field in the tuple
+    return (plate, status, montant, date_passage)
 
 async def get_browser_instance(p):
     try:
@@ -108,10 +127,8 @@ async def main():
         subprocess.run(["taskkill", "/IM", "EXCEL.EXE", "/F"], check=True)
         print("Closed any running Excel instance to free up 'resultats.xlsx'.")
     except subprocess.CalledProcessError:
-        # This error can occur if Excel wasn't open at all, so we ignore it.
         pass
     except FileNotFoundError:
-        # On non-Windows systems or if 'taskkill' isn't found, also ignore
         pass
 
     ############################################################################
@@ -143,10 +160,11 @@ async def main():
         await browser.close()
 
     # Sort + Excel
+    # Now each result is (plate, status, montant, date_passage)
     results_sorted = sorted(all_results, key=lambda x: x[0])
     print("\n=== Récapitulatif final ===")
-    for plate, status, montant in results_sorted:
-        print(f"{plate} -> {status} (Montant: {montant})")
+    for plate, status, montant, date_passage in results_sorted:
+        print(f"{plate} -> {status} (Montant: {montant}), Date de passage: {date_passage}")
 
     wb = Workbook()
     ws = wb.active
@@ -156,9 +174,11 @@ async def main():
     ws.column_dimensions["B"].width = 10
     ws.column_dimensions["C"].width = 30
     ws.column_dimensions["D"].width = 15
+    ws.column_dimensions["E"].width = 20  # For the Date de passage column
 
+    # Header row
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ws.append(["Heure et Date", "Plaque", "Statut", "Montant"])
+    ws.append(["Heure et Date", "Plaque", "Statut", "Montant", "Date de passage"])
 
     header_font = Font(bold=True, size=12)
     header_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
@@ -166,18 +186,19 @@ async def main():
         cell.font = header_font
         cell.fill = header_fill
 
-    for plate, status, montant in results_sorted:
-        ws.append([now_str, plate, status, montant])
+    # Write data rows
+    for plate, status, montant, date_passage in results_sorted:
+        ws.append([now_str, plate, status, montant, date_passage])
 
     excel_filename = "resultats.xlsx"
     wb.save(excel_filename)
-    print("\nFichier Excel enregistré sous resultats.xlsx")
+    print(f"\nFichier Excel enregistré sous {excel_filename}")
 
     ############################################################################
     # 3) Open resultats.xlsx at the end (Windows only)
     ############################################################################
     try:
-        os.startfile(excel_filename)  # Windows-specific
+        os.startfile(excel_filename)
     except AttributeError:
         print("os.startfile() is not supported on this OS.")
     except Exception as e:
